@@ -1,0 +1,17 @@
+{
+    "[PATHS]": {
+        "iptu_a_lancar": "",
+        "iptu_ok": "",
+        "iptu_erro": ""
+    },
+    "[API]": {
+        "url_get": "",
+        "url_post_info_despesa": "",
+        "url_put_alterar_despesa": "",
+        "headers": {
+            "Content-Type": "",
+            "app_token": "",
+            "access_token": ""
+        }
+    }
+}

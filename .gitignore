@@ -1,0 +1,10 @@
+.venv
+/.vscode/
+
+/data/*
+!/data/.gitkeep
+
+config.json
+
+*.ini
+*.log
