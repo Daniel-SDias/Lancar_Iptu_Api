@@ -190,9 +190,7 @@ def get_despesas_iptu_api(solicitado: str, url_get: str, headers: dict, payload:
     log.info(f"Total de despesas IPTU encontradas: {len(todos_os_dados)}")
 
     if not todos_os_dados:
-        renomear_e_mover_arquivo(
-            pdf, "Sem despesas IPTU para o contrato", caminho_iptu_erro)
-        log.error("Não foram encontradas despesas IPTU para o contrato")
+        raise ValueError
 
     return todos_os_dados
 
@@ -489,6 +487,7 @@ if __name__ == "__main__":
 
         cod_contrato = pdf.stem.upper()
         log.info(f"[{cod_contrato}] IMÓVEL ATUAL")
+
         try:
             id_contrato = dict_id_contratos[cod_contrato].upper()
         except (ValueError, KeyError):
@@ -523,11 +522,17 @@ if __name__ == "__main__":
             "idContrato": id_contrato,
             "idProduto": 6,  # IPTU
         }
-        despesas_contrato = get_despesas_iptu_api(
-            "despesas", URL_GET, HEADERS, payload_get_despesas)
+        try:
+            despesas_contrato = get_despesas_iptu_api(
+                "despesas", URL_GET, HEADERS, payload_get_despesas)
+        except ValueError:
+            log.error("Não foram encontradas despesas IPTU para o contrato")
+            renomear_e_mover_arquivo(
+                pdf, "Sem despesas IPTU para o contrato", caminho_iptu_erro)
+            continue
 
         id_lancamento = None
-        mensagem = None
+        mensagem = ""
         for despesa in despesas_contrato:
 
             descricao_prod = despesa["st_descricao_prd"]
@@ -539,8 +544,6 @@ if __name__ == "__main__":
 
                 if debito != "2":
                     mensagem = "Débito não está para o locatário"
-                    log.error(
-                        f"[{cod_contrato}] {mensagem}")
                     continue
 
                 if id_despesa:
@@ -548,11 +551,9 @@ if __name__ == "__main__":
                     break
                 else:
                     mensagem = "Sem id lançamento"
-                    log.info(f"[{cod_contrato}] {mensagem}")
                     continue
             else:
                 mensagem = "Sem lançamento"
-                log.info(f"[{cod_contrato}] {mensagem}")
                 continue
 
         if id_lancamento:
