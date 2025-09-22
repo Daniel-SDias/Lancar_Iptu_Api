@@ -428,7 +428,7 @@ def alterar_valor_despesa_api_sl(url_put: str, headers: dict, info_despesa: dict
 
 
 def renomear_e_mover_arquivo(path_arquivo: Path, info: str, novo_diretorio: Path) -> None:
-    """Renomeia o arquivo com a informação de resultado e move o arquivo para outra pasta."""
+    """Renomeia o arquivo com a mensagem de resultado e move o arquivo para outra pasta."""
 
     novo_diretorio = Path(novo_diretorio)
 
@@ -526,34 +526,36 @@ if __name__ == "__main__":
         despesas_contrato = get_despesas_iptu_api(
             "despesas", URL_GET, HEADERS, payload_get_despesas)
 
-        for i, despesa in enumerate(despesas_contrato):
+        id_lancamento = None
+        mensagem = None
+        for despesa in despesas_contrato:
 
             descricao_prod = despesa["st_descricao_prd"]
-
             valor_lancamento = despesa["vl_valor_imod"]
             debito = despesa["id_debito_imod"]
+            id_despesa = despesa["id_despesa_desp"]
 
-            if despesa["st_descricao_prd"] == "IPTU" and despesa["vl_valor_imod"] == valor_total:
-                if despesa["id_debito_imod"] != "2":
+            if descricao_prod == "IPTU" and valor_lancamento == valor_total:
+
+                if debito != "2":
+                    mensagem = "Débito não está para o locatário"
                     log.error(
-                        f"[{cod_contrato}] Débito não está para o locatário.")
-                    renomear_e_mover_arquivo(
-                        pdf, "Débito não está para o locatário", caminho_iptu_erro)
+                        f"[{cod_contrato}] {mensagem}")
                     continue
 
-                if despesa["id_despesa_desp"]:
-                    id_lancamento = despesa["id_despesa_desp"]
+                if id_despesa:
+                    id_lancamento = id_despesa
+                    break
                 else:
-                    log.info(f"[{cod_contrato}] Sem id lancamento")
-                    renomear_e_mover_arquivo(
-                        pdf, "Sem id lançamento", caminho_iptu_erro)
+                    mensagem = "Sem id lançamento"
+                    log.info(f"[{cod_contrato}] {mensagem}")
                     continue
             else:
-                log.info(f"[{cod_contrato}] Sem lançamento")
-                renomear_e_mover_arquivo(
-                    pdf, "Sem lançamento", caminho_iptu_erro)
+                mensagem = "Sem lançamento"
+                log.info(f"[{cod_contrato}] {mensagem}")
                 continue
 
+        if id_lancamento:
             payload_info_despesa = {
                 "itensPorPagina": 150,
                 "pagina": 1,
@@ -580,3 +582,6 @@ if __name__ == "__main__":
                 renomear_e_mover_arquivo(
                     pdf, "Erro PUT request", caminho_iptu_erro)
                 continue
+        else:
+            log.error(f"[{cod_contrato}] {mensagem}")
+            renomear_e_mover_arquivo(pdf, mensagem, caminho_iptu_erro)
