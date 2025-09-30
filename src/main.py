@@ -194,7 +194,7 @@ def get_despesas_iptu_api(solicitado: str, url_get: str, headers: dict, payload:
 
 
 def get_info_despesa(url_info: str, headers: dict, payload: dict) -> dict[Any, Any]:
-    """Carrega os dados da despesa para serem aproveitados como parâmetros para o PUT."""
+    """Carrega os dados da despesa para serem aproveitados como parâmetros para o PUT request."""
 
     log.info("Carregando dados da despesa selecionada.")
 
@@ -218,7 +218,7 @@ def get_info_despesa(url_info: str, headers: dict, payload: dict) -> dict[Any, A
 
 
 def alterar_valor_despesa_api_sl(url_put: str, headers: dict, info_despesa: dict, codigo_barras: str, data_venc_formatada: str) -> None:
-    """Envia a requisição PUT para lançar e/ou alterar o código de barras e a data de vencimento na despesa."""
+    """Envia a PUT request para lançar e/ou alterar o código de barras e a data de vencimento da despesa."""
 
     comp = info_despesa["composicoes"][0]
 
@@ -335,6 +335,7 @@ def alterar_valor_despesa_api_sl(url_put: str, headers: dict, info_despesa: dict
 
 
 def lancar_valor_despesa_api_sl(url_put: str, headers: dict, info_despesa: dict, codigo_barras: str, data_venc_formatada: str) -> None:
+    """Envia a PUT request para lançar o código de barras e a data de vencimento da despesa."""
 
     comp = info_despesa["composicoes"][0]
 
@@ -452,7 +453,7 @@ def lancar_valor_despesa_api_sl(url_put: str, headers: dict, info_despesa: dict,
 
 
 def renomear_e_mover_arquivo(path_arquivo: Path, info: str | list[str], novo_diretorio: Path) -> None:
-    """Renomeia o arquivo com a mensagem de resultado e move o arquivo para outra pasta."""
+    """Renomeia o arquivo com a mensagem de sucesso ou erro e move o arquivo para outra pasta."""
 
     novo_diretorio = Path(novo_diretorio)
 
@@ -519,12 +520,15 @@ if __name__ == "__main__":
         log.info(f"[{cod_contrato}] IMÓVEL ATUAL")
 
         try:
+            if len(cod_contrato) > 8:  # Caso de código composto do Superlogica "I0000000 AP00000_ESTASA"
+                cod_contrato = cod_contrato.replace(" ", " | ")
+
             id_contrato = dict_id_contratos[cod_contrato].upper()
         except (ValueError, KeyError):
             log.error(
-                f"[{cod_contrato}] Id do contrato não encontrado na relação.")
+                f"[{cod_contrato}] Id do contrato não encontrado na relação. Imóvel vazio.")
             renomear_e_mover_arquivo(
-                pdf, "Id contrato não encontrado", caminho_iptu_erro)
+                pdf, "Imóvel Vazio", caminho_iptu_erro)
             continue
 
         data_vencimento, cod_barras, valor_total = extrair_dados_pdf(
@@ -556,9 +560,9 @@ if __name__ == "__main__":
             despesas_contrato = get_despesas_iptu_api(
                 "despesas", URL_GET, HEADERS, payload_get_despesas)
         except ValueError:
-            log.error("Não foram encontradas despesas IPTU para o contrato")
+            log.error("Não foram encontradas despesas IPTU no contrato")
             renomear_e_mover_arquivo(
-                pdf, "Sem despesas IPTU para o contrato", caminho_iptu_erro)
+                pdf, "Sem despesas IPTU no contrato", caminho_iptu_erro)
             continue
 
         id_lancamento = None
@@ -574,13 +578,12 @@ if __name__ == "__main__":
             if descricao_prod == "IPTU" and valor_lancamento == valor_total:
 
                 if debito != "2":
-                    # Se a despesa tem lançamento válido, mas não está para o Locatário
                     if id_despesa or id_despesa_despm:
+                        # Se a despesa tem lançamento válido, mas não tem Débito Locatário
                         mensagem.append("Débito não está para o locatário")
                         break
-                else:
-                    continue
 
+                # Despesa tem Débito Locatário (situação correta)
                 if id_despesa:
                     id_lancamento = id_despesa
                     tipo_form = "FormAlterarValorDespesaPrincipal"
@@ -593,11 +596,14 @@ if __name__ == "__main__":
                     mensagem.append("Sem id lançamento")
                     continue
             else:
+                if valor_lancamento != valor_total:
+                    mensagem.append("Valor lançamento incorreto")
+                    continue
                 mensagem.append("Sem lançamento")
                 continue
 
         if id_lancamento:
-            # ALTERAR VALOR NO A PAGAR
+            # ALTERAR VALOR NO A PAGAR (ÍCONE SETA)
             if id_despesa:
                 payload_info_despesa = {
                     "itensPorPagina": 150,
@@ -626,7 +632,7 @@ if __name__ == "__main__":
                         pdf, "Erro PUT request", caminho_iptu_erro)
                     continue
 
-            # LANÇAR DESPESA
+            # LANÇAR DESPESA (ÍCONE FOGUETE)
             elif id_despesa_despm:
                 payload_info_despesa = {
                     "itensPorPagina": 150,
