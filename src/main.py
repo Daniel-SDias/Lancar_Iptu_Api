@@ -53,12 +53,12 @@ def obter_competencia_atual() -> tuple[int, int]:
     return mes, ano
 
 
-def get_contratos_api(solicitado: str, url_get: str, headers: dict[str, str]) -> list[dict]:
-    """Carrega dados de todos os contratos via API Superlógica."""
+def get_base_api(endpoint: str, url_get: str, headers: dict[str, str]) -> list[dict]:
+    """Carrega dados de todos os contratos/imóveis via API Superlógica."""
 
-    log.info("Carregando dados de contratos.")
+    log.info(f"Carregando dados de {endpoint}.")
 
-    BASE_URL = f"{url_get}{solicitado}"
+    BASE_URL = f"{url_get}{endpoint}"
     PARAMS = {"itensPorPagina": 150, "pagina": 1}
 
     todos_os_dados = []
@@ -80,31 +80,54 @@ def get_contratos_api(solicitado: str, url_get: str, headers: dict[str, str]) ->
         todos_os_dados.extend(data["data"])  # Adiciona à lista principal
         PARAMS["pagina"] += 1  # Avança para a próxima página
 
-    log.info(f"Total de contratos salvos: {len(todos_os_dados)}")
+    log.info(f"Total de {endpoint} salvos: {len(todos_os_dados)}")
 
     if not todos_os_dados:
         log.error("Nenhum contrato encontrado.")
         raise Exception("Nenhum contrato encontrado.")
+
+    with open(f"data/base_{endpoint}.json", "w", encoding="utf-8") as file:
+        json.dump(todos_os_dados, file, indent=4, ensure_ascii=False)
 
     return todos_os_dados
 
 
 def relacionar_codigo_e_id_contratos(lista_contratos: list[dict]) -> dict[str, str]:
     """Cria um dicionário que relaciona código do contrato com id do contrato no Superlógica."""
+    try:
+        id_contratos = {}
 
-    id_contratos = {}
+        for contrato in lista_contratos:
+            cod_contrato = contrato["codigo_contrato"].split("/")[0]
+            id_contrato = contrato["id_contrato_con"]
 
-    for contrato in lista_contratos:
-        cod_contrato = contrato["codigo_contrato"].split("/")[0]
-        id_contrato = contrato["id_contrato_con"]
-
-        id_contratos[cod_contrato] = id_contrato
+            id_contratos[cod_contrato] = id_contrato
+    except KeyError as e:
+        raise
 
     with open("data/relação id contrato.json", "w", encoding="utf-8") as file:
         json.dump(id_contratos, file, indent=4, ensure_ascii=False)
 
     log.info("Relação código e id de contratos criada.")
     return id_contratos
+
+
+def relacionar_codigo_e_id_imoveis(lista_imoveis: list[dict]) -> dict[str, str]:
+    """Cria um dicionário que relaciona código do imóvel com id do imóvel no Superlógica."""
+
+    id_imoveis = {}
+
+    for imovel in lista_imoveis:
+        cod_imovel = imovel["st_identificador_imo"]
+        id_imovel = imovel["id_imovel_imo"]
+
+        id_imoveis[cod_imovel] = id_imovel
+
+    with open("data/relação id imóvel.json", "w", encoding="utf-8") as file:
+        json.dump(id_imoveis, file, indent=4, ensure_ascii=False)
+
+    log.info("Relação código e id de imóveis criada.")
+    return id_imoveis
 
 
 def listar_arquivos_pdf(diretorio: str) -> list[Path]:
@@ -123,7 +146,7 @@ def listar_arquivos_pdf(diretorio: str) -> list[Path]:
 
     if not pdfs:
         log.error("Nenhum arquivo encontrado no diretório.")
-        raise ValueError("Nenhum arquivo encontrado no diretório.")
+        raise ValueError("Nenhum arquivo encontrado no diretório Ativos.")
 
     return pdfs
 
@@ -204,10 +227,8 @@ def get_info_despesa(url_info: str, headers: dict, payload: dict) -> dict[Any, A
     response = requests.get(BASE_URL, headers=headers, params=PARAMS)
 
     if response.status_code != 200:
-        log.error(
+        raise requests.exceptions.HTTPError(
             f"Erro na requisição para obtenção dos parâmetros: {response.status_code}")
-        renomear_e_mover_arquivo(
-            pdf, "Erro na requisição para obtenção dos parâmetros", caminho_iptu_erro)
 
     data = response.json()
 
@@ -217,7 +238,7 @@ def get_info_despesa(url_info: str, headers: dict, payload: dict) -> dict[Any, A
     return dict_info_desp
 
 
-def alterar_valor_despesa_api_sl(url_put: str, headers: dict, info_despesa: dict, codigo_barras: str, data_venc_formatada: str) -> None:
+def alterar_valor_despesa_api_sl(url_put: str, headers: dict, info_despesa: dict, codigo_barras: str, data_venc_formatada: str, data_vencimento: str, id_despesa_desp: str) -> None:
     """Envia a PUT request para lançar e/ou alterar o código de barras e a data de vencimento da despesa."""
 
     comp = info_despesa["composicoes"][0]
@@ -320,21 +341,18 @@ def alterar_valor_despesa_api_sl(url_put: str, headers: dict, info_despesa: dict
     response = requests.put(url=url_put, headers=headers, data=PAYLOAD)
 
     if response.status_code != 200:
-        log.error(f"Erro na requisição: {response.status_code}")
-        renomear_e_mover_arquivo(
-            pdf, "Erro na requisição post", caminho_iptu_erro)
-        raise requests.exceptions.HTTPError
+        raise requests.exceptions.HTTPError(
+            f"Status {response.status_code} na alteração de despesa")
 
     if "COM ERRO" in response.text:
-        log.error(f"Erro no processamento do ítem.\n{response.text}")
-        renomear_e_mover_arquivo(
-            pdf, "Erro interno da requisição", caminho_iptu_erro)
-        raise requests.exceptions.HTTPError
+        raise requests.exceptions.HTTPError(
+            f"Erro no processamento do item: {response.text}"
+        )
 
     return
 
 
-def lancar_valor_despesa_api_sl(url_put: str, headers: dict, info_despesa: dict, codigo_barras: str, data_venc_formatada: str) -> None:
+def lancar_valor_despesa_api_sl(url_put: str, headers: dict, info_despesa: dict, codigo_barras: str, data_venc_formatada: str, data_inicial: str, id_despesa_despm: str) -> None:
     """Envia a PUT request para lançar o código de barras e a data de vencimento da despesa."""
 
     comp = info_despesa["composicoes"][0]
@@ -438,16 +456,12 @@ def lancar_valor_despesa_api_sl(url_put: str, headers: dict, info_despesa: dict,
     response = requests.put(url=url_put, headers=headers, data=PAYLOAD)
 
     if response.status_code != 200:
-        log.error(f"Erro na requisição: {response.status_code}")
-        renomear_e_mover_arquivo(
-            pdf, "Erro na requisição post", caminho_iptu_erro)
-        raise requests.exceptions.HTTPError
+        raise requests.exceptions.HTTPError(
+            f"Status {response.status_code} no lançamento da despesa")
 
     if "COM ERRO" in response.text:
-        log.error(f"Erro no processamento do ítem.\n{response.text}")
-        renomear_e_mover_arquivo(
-            pdf, "Erro interno da requisição", caminho_iptu_erro)
-        raise requests.exceptions.HTTPError
+        raise requests.exceptions.HTTPError(
+            f"Erro no processamento do ítem. {response.text}")
 
     return
 
@@ -480,15 +494,19 @@ def renomear_e_mover_arquivo(path_arquivo: Path, info: str | list[str], novo_dir
     log.info(f"Arquivo movido para: {str(novo_diretorio)}")
 
 
-if __name__ == "__main__":
+def main() -> None:
 
     log.info("========= APLICAÇÃO INICIADA. =================================")
 
     config = init_config()
 
     try:
-        caminho_busca_iptu = config["[PATHS]"]["iptu_a_lancar"]
-        caminho_iptu_ok = config["[PATHS]"]["iptu_ok"]
+        caminho_busca_iptu_ativos = config["[PATHS]"]["iptu_a_lancar_ativos"]
+        caminho_busca_iptu_vazios = config["[PATHS]"]["iptu_a_lancar_vazios"]
+
+        caminho_iptu_ok = config["[PATHS]"]["iptu_ativo_ok"]
+        caminho_iptu_ok_vazios = config["[PATHS]"]["iptu_vazio_ok"]
+
         caminho_iptu_erro = config["[PATHS]"]["iptu_erro"]
 
         URL_GET = config["[API]"]["url_get"]
@@ -509,11 +527,26 @@ if __name__ == "__main__":
     data_inicial = f"{MES_LANCAMENTO}/1/{ANO_LANCAMENTO}"
     data_final = f"{MES_LANCAMENTO}/30/{ANO_LANCAMENTO}"
 
-    lista_contratos = get_contratos_api("contratos", URL_GET, HEADERS)
+    # TESTETESTETESTETESTETESTETESTETESTETESTETESTETESTETESTE
+    MES_LANCAMENTO = 11
+    data_inicial = f"{MES_LANCAMENTO}/1/{ANO_LANCAMENTO}"
+    data_final = f"{MES_LANCAMENTO}/30/{ANO_LANCAMENTO}"
+    # TESTETESTETESTETESTETESTETESTETESTETESTETESTETESTETESTE
+
+    lista_contratos = get_base_api("contratos", URL_GET, HEADERS)
     dict_id_contratos = relacionar_codigo_e_id_contratos(lista_contratos)
 
-    lista_pdfs = listar_arquivos_pdf(caminho_busca_iptu)
+    try:
+        lista_pdfs = listar_arquivos_pdf(caminho_busca_iptu_ativos)
+    except ValueError as e:
+        lista_pdfs = []
+        log.error(e)
 
+    # ======================================================================================
+    # ======================================================================================
+    # ======================================================================================
+
+    # LANÇAR IMÓVEIS ATIVOS:
     for pdf in lista_pdfs:
 
         cod_contrato = pdf.stem.upper()
@@ -527,6 +560,7 @@ if __name__ == "__main__":
         except (ValueError, KeyError):
             log.error(
                 f"[{cod_contrato}] Id do contrato não encontrado na relação. Imóvel vazio.")
+
             renomear_e_mover_arquivo(
                 pdf, "Imóvel Vazio", caminho_iptu_erro)
             continue
@@ -565,31 +599,28 @@ if __name__ == "__main__":
                 pdf, "Sem despesas IPTU no contrato", caminho_iptu_erro)
             continue
 
-        id_lancamento = None
         mensagem = []
         for despesa in despesas_contrato:
 
             descricao_prod = despesa["st_descricao_prd"]
             valor_lancamento = despesa["vl_valor_imod"]
             debito = despesa["id_debito_imod"]
-            id_despesa = despesa["id_despesa_desp"]
+            id_despesa_desp = despesa["id_despesa_desp"]
             id_despesa_despm = despesa["id_despesa_despm"]
 
             if descricao_prod == "IPTU" and valor_lancamento == valor_total:
 
                 if debito != "2":
-                    if id_despesa or id_despesa_despm:
+                    if id_despesa_desp or id_despesa_despm:
                         # Se a despesa tem lançamento válido, mas não tem Débito Locatário
                         mensagem.append("Débito não está para o locatário")
                         break
 
                 # Despesa tem Débito Locatário (situação correta)
-                if id_despesa:
-                    id_lancamento = id_despesa
+                if id_despesa_desp:
                     tipo_form = "FormAlterarValorDespesaPrincipal"
                     break
                 elif id_despesa_despm:
-                    id_lancamento = id_despesa_despm
                     tipo_form = "FormLancarDespesaPrincipal"
                     break
                 else:
@@ -602,65 +633,263 @@ if __name__ == "__main__":
                 mensagem.append("Sem lançamento")
                 continue
 
-        if id_lancamento:
-            # ALTERAR VALOR NO A PAGAR (ÍCONE SETA)
-            if id_despesa:
-                payload_info_despesa = {
-                    "itensPorPagina": 150,
-                    "pagina": 1,
-                    "ID_DESPESA_DESP": id_despesa,
-                    "ID_DESPESA_DESPM": id_despesa_despm,
-                    "DT_FIM": data_final,
-                    "FORM": tipo_form
-                }
+        # ALTERAR VALOR NO A PAGAR (ÍCONE SETA)
+        if id_despesa_desp:
+            payload_info_despesa = {
+                "itensPorPagina": 150,
+                "pagina": 1,
+                "ID_DESPESA_DESP": id_despesa_desp,
+                "ID_DESPESA_DESPM": id_despesa_despm,
+                "DT_FIM": data_final,
+                "FORM": tipo_form
+            }
+            try:
                 info_despesa = get_info_despesa(
                     URL_INFO_DESP, HEADERS, payload_info_despesa)
+            except requests.exceptions.HTTPError as e:
+                log.error(e)
+                renomear_e_mover_arquivo(
+                    pdf, "Erro na requisição para obtenção dos parâmetros", caminho_iptu_erro)
 
-                try:
-                    alterar_valor_despesa_api_sl(
-                        URL_ALTERAR_DESP, TEMP_HEADERS, info_despesa, cod_barras, data_venc_formatada)
+            try:
+                alterar_valor_despesa_api_sl(
+                    URL_ALTERAR_DESP,
+                    TEMP_HEADERS,
+                    info_despesa,
+                    cod_barras,
+                    data_venc_formatada,
+                    data_vencimento,
+                    id_despesa_desp
+                )
+                log.info(f"[{cod_contrato}] Alterado com sucesso.")
+                renomear_e_mover_arquivo(pdf, "OK", caminho_iptu_ok)
 
-                    log.info(f"[{cod_contrato}] Alterado com sucesso.")
-                    renomear_e_mover_arquivo(pdf, "OK", caminho_iptu_ok)
+            except requests.exceptions.HTTPError as e:
+                log.error(f"[{cod_contrato}] Erro PUT request: {e}")
+                renomear_e_mover_arquivo(
+                    pdf, "Erro PUT request", caminho_iptu_erro)
+                continue
 
-                except requests.exceptions.HTTPError:
-                    continue
+            except Exception as e:
+                log.error(f"[{cod_contrato}] Erro inesperado: {e}")
+                renomear_e_mover_arquivo(
+                    pdf, "Erro inesperado", caminho_iptu_erro)
+                continue
 
-                except Exception as e:
-                    log.error(f"Erro PUT request: {e}")
-                    renomear_e_mover_arquivo(
-                        pdf, "Erro PUT request", caminho_iptu_erro)
-                    continue
+        # LANÇAR DESPESA (ÍCONE FOGUETE)
+        elif id_despesa_despm:
+            payload_info_despesa = {
+                "itensPorPagina": 150,
+                "pagina": 1,
+                "ID_DESPESA_DESP": id_despesa_desp,
+                "ID_DESPESA_DESPM": id_despesa_despm,
+                "DT_FIM": data_final,
+                "DT_INICIO": data_inicial,
+                "FORM": tipo_form
+            }
+            info_despesa = get_info_despesa(
+                URL_INFO_DESP, HEADERS, payload_info_despesa)
 
-            # LANÇAR DESPESA (ÍCONE FOGUETE)
-            elif id_despesa_despm:
-                payload_info_despesa = {
-                    "itensPorPagina": 150,
-                    "pagina": 1,
-                    "ID_DESPESA_DESP": id_despesa,
-                    "ID_DESPESA_DESPM": id_despesa_despm,
-                    "DT_FIM": data_final,
-                    "DT_INICIO": data_inicial,
-                    "FORM": tipo_form
-                }
-                info_despesa = get_info_despesa(
-                    URL_INFO_DESP, HEADERS, payload_info_despesa)
+            try:
+                lancar_valor_despesa_api_sl(
+                    URL_LANCAR_DESP,
+                    TEMP_HEADERS,
+                    info_despesa,
+                    cod_barras,
+                    data_venc_formatada,
+                    data_inicial,
+                    id_despesa_despm
+                )
+                log.info(f"[{cod_contrato}] Lançado com sucesso.")
+                renomear_e_mover_arquivo(pdf, "OK", caminho_iptu_ok)
 
-                try:
-                    lancar_valor_despesa_api_sl(
-                        URL_LANCAR_DESP, TEMP_HEADERS, info_despesa, cod_barras, data_venc_formatada)
+            except requests.exceptions.HTTPError as e:
+                log.error(f"[{cod_contrato}] Erro PUT request: {e}")
+                renomear_e_mover_arquivo(
+                    pdf, "Erro PUT request", caminho_iptu_erro)
+                continue
 
-                    log.info(f"[{cod_contrato}] Lançado com sucesso.")
-                    renomear_e_mover_arquivo(pdf, "OK", caminho_iptu_ok)
+            except Exception as e:
+                log.error(f"[{cod_contrato}] Erro inesperado: {e}")
+                renomear_e_mover_arquivo(
+                    pdf, "Erro inesperado", caminho_iptu_erro)
+                continue
 
-                except requests.exceptions.HTTPError:
-                    continue
-
-                except Exception as e:
-                    log.error(f"Erro PUT request: {e}")
-                    renomear_e_mover_arquivo(
-                        pdf, "Erro PUT request", caminho_iptu_erro)
-                    continue
+        # NÃO TEM LANÇAMENTO VÁLIDO:
         else:
             log.error(f"[{cod_contrato}] {mensagem}")
             renomear_e_mover_arquivo(pdf, mensagem, caminho_iptu_erro)
+
+    # ======================================================================================
+    # ======================================================================================
+    # ======================================================================================
+
+    # LANÇAR IMÓVEIS VAZIOS:
+    lista_imoveis = get_base_api("imoveis", URL_GET, HEADERS)
+    dict_id_imoveis = relacionar_codigo_e_id_imoveis(lista_imoveis)
+
+    lista_pdfs_vazios = listar_arquivos_pdf(caminho_busca_iptu_vazios)
+
+    for pdf in lista_pdfs_vazios:
+
+        cod_imovel = pdf.stem.upper()
+        log.info(f"[{cod_imovel}] IMÓVEL VAZIO ATUAL")
+
+        try:
+            id_imovel = dict_id_imoveis[cod_imovel].upper()
+        except (ValueError, KeyError):
+            log.error(
+                f"[{cod_imovel}] Id do imóvel não encontrado na relação de Vazios")
+            renomear_e_mover_arquivo(
+                pdf, "Vazio Id não encontrado", caminho_iptu_erro)
+            continue
+
+        data_vencimento, cod_barras, valor_total = extrair_dados_pdf(
+            pdf, MES_LANCAMENTO)
+        data_venc_formatada = formatar_data_vencimento(data_vencimento)
+
+        log.info(f"Id do imóvel: {id_imovel}")
+        log.info(f"Data vencimento: {data_vencimento}")
+        log.info(f"Código de Barras: {cod_barras}")
+        log.info(f"Valor Total: {valor_total}")
+
+        payload_get_despesas = {
+            "itensPorPagina": 150,
+            "pagina": 1,
+            "ID_IMOVEL_SEM_CONTRATO": id_imovel,
+            "dtInicioMensal": data_inicial,
+            "dtFimMensal": data_final,
+            "idProduto": 6,  # IPTU
+        }
+        try:
+            despesas_contrato = get_despesas_iptu_api(
+                "despesas", URL_GET, HEADERS, payload_get_despesas)
+        except ValueError:
+            log.error("Não foram encontradas despesas IPTU no imóvel")
+            renomear_e_mover_arquivo(
+                pdf, "Vazio Sem despesas IPTU no imóvel", caminho_iptu_erro)
+            continue
+
+        mensagem = []
+        for despesa in despesas_contrato:
+
+            descricao_prod = despesa["st_descricao_prd"]
+            valor_lancamento = despesa["vl_valor_imod"]
+            debito = despesa["id_debito_imod"]
+            id_despesa_desp = despesa["id_despesa_desp"]
+            id_despesa_despm = despesa["id_despesa_despm"]
+
+            if descricao_prod == "IPTU" and valor_lancamento == valor_total:
+
+                if debito != "1":
+                    if id_despesa_desp or id_despesa_despm:
+                        # Se a despesa tem lançamento válido, mas não tem Débito Proprietário
+                        mensagem.append(
+                            "Vazio Débito não está para o proprietário")
+                        break
+
+                if id_despesa_desp and id_despesa_despm:
+                    tipo_form = "FormAlterarValorDespesaPrincipal"
+                    break
+                elif id_despesa_despm:
+                    tipo_form = "FormLancarDespesaPrincipal"
+                    break
+                else:
+                    mensagem.append("Vazio Sem id lançamento")
+                    continue
+            else:
+                if valor_lancamento != valor_total:
+                    mensagem.append("Vazio Valor lançamento incorreto")
+                    continue
+                mensagem.append("Vazio Sem lançamento")
+                continue
+
+        # ALTERAR VALOR NO A PAGAR (ÍCONE SETA)
+        if id_despesa_desp:
+            payload_info_despesa = {
+                "itensPorPagina": 150,
+                "pagina": 1,
+                "ID_DESPESA_DESP": id_despesa_desp,
+                "ID_DESPESA_DESPM": id_despesa_despm,
+                "DT_FIM": data_final,
+                "FORM": tipo_form
+            }
+            try:
+                info_despesa = get_info_despesa(
+                    URL_INFO_DESP, HEADERS, payload_info_despesa)
+            except requests.exceptions.HTTPError as e:
+                log.error(e)
+                renomear_e_mover_arquivo(
+                    pdf, "Vazio Erro na requisição para obtenção dos parâmetros", caminho_iptu_erro)
+
+            try:
+                alterar_valor_despesa_api_sl(
+                    URL_ALTERAR_DESP,
+                    TEMP_HEADERS,
+                    info_despesa,
+                    cod_barras,
+                    data_venc_formatada,
+                    data_vencimento,
+                    id_despesa_desp
+                )
+                log.info(f"[{cod_imovel}] Alterado com sucesso.")
+                renomear_e_mover_arquivo(
+                    pdf, "Vazio OK", caminho_iptu_ok_vazios)
+
+            except requests.exceptions.HTTPError as e:
+                log.error(f"[{cod_imovel}] Erro PUT request: {e}")
+                renomear_e_mover_arquivo(
+                    pdf, "Vazio Erro PUT request", caminho_iptu_erro)
+                continue
+
+            except Exception as e:
+                log.error(f"[{cod_imovel}] Erro inesperado: {e}")
+                renomear_e_mover_arquivo(
+                    pdf, "Vazio Erro inesperado", caminho_iptu_erro)
+                continue
+
+        # LANÇAR DESPESA (ÍCONE FOGUETE)
+        elif id_despesa_despm:
+            payload_info_despesa = {
+                "itensPorPagina": 150,
+                "pagina": 1,
+                "ID_DESPESA_DESP": id_despesa_desp,
+                "ID_DESPESA_DESPM": id_despesa_despm,
+                "DT_FIM": data_final,
+                "DT_INICIO": data_inicial,
+                "FORM": tipo_form
+            }
+            info_despesa = get_info_despesa(
+                URL_INFO_DESP, HEADERS, payload_info_despesa)
+
+            try:
+                lancar_valor_despesa_api_sl(
+                    URL_LANCAR_DESP,
+                    TEMP_HEADERS,
+                    info_despesa,
+                    cod_barras,
+                    data_venc_formatada,
+                    data_inicial,
+                    id_despesa_despm
+                )
+                log.info(f"[{cod_imovel}] Lançado com sucesso.")
+                renomear_e_mover_arquivo(
+                    pdf, "Vazio OK", caminho_iptu_ok_vazios)
+
+            except requests.exceptions.HTTPError as e:
+                log.error(f"[{cod_imovel}] Erro PUT request: {e}")
+                renomear_e_mover_arquivo(
+                    pdf, "Vazio Erro PUT request", caminho_iptu_erro)
+                continue
+
+        # NÃO TEM LANÇAMENTO VÁLIDO:
+        else:
+            log.error(f"[{cod_imovel}] {mensagem}")
+            renomear_e_mover_arquivo(pdf, mensagem, caminho_iptu_erro)
+            continue
+
+    return
+
+
+if __name__ == "__main__":
+    main()
